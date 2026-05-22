@@ -1,5 +1,12 @@
 import { Elysia, t } from 'elysia'
+import { config } from '../config/env'
+import { assertAllowedUpstream } from '../config/upstreamPolicy'
+import { type JwtVerifier, hasScope, verifyAuthUser } from '../plugins/auth'
 import { normalizePrefix, resolveRoute, saveRoute } from '../config/database'
+
+interface AdminContext {
+  jwt?: JwtVerifier
+}
 
 const hopByHopHeaders = new Set([
   'connection',
@@ -15,9 +22,16 @@ const hopByHopHeaders = new Set([
 
 function proxiedHeaders(headers: Headers): Headers {
   const nextHeaders = new Headers()
+  const connectionHeaders = new Set(
+    (headers.get('connection') ?? '')
+      .split(',')
+      .map((header) => header.trim().toLowerCase())
+      .filter(Boolean)
+  )
 
   for (const [key, value] of headers.entries()) {
-    if (!hopByHopHeaders.has(key.toLowerCase())) nextHeaders.set(key, value)
+    const normalizedKey = key.toLowerCase()
+    if (!hopByHopHeaders.has(normalizedKey) && !connectionHeaders.has(normalizedKey)) nextHeaders.set(key, value)
   }
 
   return nextHeaders
@@ -43,11 +57,14 @@ async function proxyRequest(request: Request): Promise<Response> {
 
   const method = request.method.toUpperCase()
   const hasBody = method !== 'GET' && method !== 'HEAD'
+  await assertAllowedUpstream(route.target)
+
   const response = await fetch(upstreamUrl(route.target, route.prefix, request.url), {
     method,
     headers: proxiedHeaders(request.headers),
     body: hasBody ? request.body : undefined,
-    redirect: 'manual'
+    redirect: 'manual',
+    signal: AbortSignal.timeout(config.upstreamTimeoutMs)
   })
 
   const headers = proxiedHeaders(response.headers)
@@ -61,9 +78,23 @@ async function proxyRequest(request: Request): Promise<Response> {
 export const proxyRoutes = new Elysia({ name: 'proxy-routes' })
   .post(
     '/_gateway/routes',
-    ({ body, set }) => {
+    async (context) => {
+      const { body, set } = context
+      const { jwt } = context as typeof context & AdminContext
+      const user = jwt ? await verifyAuthUser(jwt, context.request.headers) : null
+
+      if (!user) {
+        set.status = 401
+        return { error: 'Unauthorized' }
+      }
+
+      if (!hasScope(user, config.jwtAdminScope)) {
+        set.status = 403
+        return { error: 'Forbidden' }
+      }
+
       const prefix = normalizePrefix(body.prefix)
-      const target = new URL(body.target).toString().replace(/\/+$/, '')
+      const target = (await assertAllowedUpstream(body.target)).toString().replace(/\/+$/, '')
 
       saveRoute(prefix, target)
       set.status = 201

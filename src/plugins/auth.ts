@@ -1,12 +1,17 @@
 import { jwt } from '@elysiajs/jwt'
 import { Elysia } from 'elysia'
+import { config } from '../config/env'
 
 export interface AuthUser {
   sub: string
   scope?: string
 }
 
-const publicPrefixes = ['/_gateway/health', '/_gateway/routes']
+export interface JwtVerifier {
+  verify(token: string): Promise<false | Record<string, unknown>>
+}
+
+const publicPrefixes = ['/_gateway/health']
 
 function isPublicPath(pathname: string): boolean {
   return publicPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))
@@ -18,37 +23,38 @@ function bearerToken(headers: Headers): string | null {
   return authorization.slice('Bearer '.length).trim() || null
 }
 
+export async function verifyAuthUser(jwtService: JwtVerifier, headers: Headers): Promise<AuthUser | null> {
+  const token = bearerToken(headers)
+  if (!token) return null
+
+  const payload = await jwtService.verify(token)
+  if (!payload || typeof payload.sub !== 'string') return null
+
+  const scope = typeof payload.scope === 'string' ? payload.scope : undefined
+  return { sub: payload.sub, scope }
+}
+
 export const authPlugin = new Elysia({ name: 'auth' })
   .use(
     jwt({
       name: 'jwt',
-      secret: Bun.env.JWT_SECRET ?? 'briskroute-local-development-secret'
+      secret: config.jwtSecret
     })
   )
-  .derive(async ({ jwt: jwtService, request, set }) => {
+  .onBeforeHandle(async ({ jwt: jwtService, request, set }) => {
     const pathname = new URL(request.url).pathname
 
-    if (isPublicPath(pathname)) return { user: null as AuthUser | null }
+    if (isPublicPath(pathname)) return undefined
 
-    const token = bearerToken(request.headers)
-    if (!token) {
+    const user = await verifyAuthUser(jwtService, request.headers)
+    if (!user) {
       set.status = 401
-      return { user: null as AuthUser | null }
+      return { error: 'Unauthorized' }
     }
 
-    const payload = await jwtService.verify(token)
-    if (!payload || typeof payload.sub !== 'string') {
-      set.status = 401
-      return { user: null as AuthUser | null }
-    }
-
-    const scope = typeof payload.scope === 'string' ? payload.scope : undefined
-    return { user: { sub: payload.sub, scope } satisfies AuthUser }
+    return undefined
   })
-  .onBeforeHandle(({ request, user, set }) => {
-    const pathname = new URL(request.url).pathname
-    if (isPublicPath(pathname) || user) return undefined
 
-    set.status = 401
-    return { error: 'Unauthorized' }
-  })
+export function hasScope(user: AuthUser | null, scope: string): boolean {
+  return user?.scope?.split(/\s+/).includes(scope) ?? false
+}

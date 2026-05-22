@@ -85,6 +85,9 @@ bun install
 ### Running Pipelines
 Launch with hot-reload watch environments active for micro-service iteration:
 ```bash
+export JWT_SECRET=replace-with-secure-secret-at-least-32-characters
+export UPSTREAM_ALLOWED_HOSTS=localhost
+export UPSTREAM_ALLOWED_CIDRS=127.0.0.0/8,::1/128
 bun run dev
 ```
 
@@ -103,11 +106,16 @@ Tailor operational metrics via root environments or `.env` parameters:
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
 | `PORT` | `3000` | Gateway listener port bound to the loopback. |
-| `JWT_SECRET` | `replace-with-secure-secret` | Cryptographic signature validation key. |
+| `JWT_SECRET` | Required | Cryptographic signature validation key, minimum 32 characters. |
+| `JWT_ADMIN_SCOPE` | `routes:write` | JWT scope required for route administration. |
 | `DEFAULT_UPSTREAM` | `http://localhost:4000` | Automated fallback seed for the baseline `/api` routing prefix. |
 | `BRISKTROUTE_DB_PATH` | `.data/briskroute.sqlite` | SQLite state storage node path (Automatically git-ignored). |
 | `RATE_LIMIT_WINDOW_MS`| `60000` | Sizing block for traffic window calculations. |
 | `RATE_LIMIT_MAX` | `120` | Threshold of maximum allowed atomic queries within window. |
+| `UPSTREAM_TIMEOUT_MS` | `30000` | Maximum upstream wait before `504 Gateway Timeout`. |
+| `UPSTREAM_ALLOWED_HOSTS` | Empty | Comma-separated exact hostnames allowed as upstream targets. Hostnames must also resolve into allowed CIDRs when CIDRs are configured. |
+| `UPSTREAM_ALLOWED_CIDRS` | Empty | Comma-separated IPv4/IPv6 CIDR ranges allowed as upstream IP targets and hostname resolutions. |
+| `TRUST_PROXY` | `false` | Enables `x-forwarded-for` and `x-real-ip` trust for rate limits. |
 
 ---
 
@@ -130,6 +138,7 @@ Registers an explicit routing map inside the state engines instantly:
 ```bash
 curl -X POST http://localhost:3000/_gateway/routes \
   -H 'content-type: application/json' \
+  -H 'authorization: Bearer <admin-jwt>' \
   -d '{"prefix":"/api","target":"http://localhost:4000"}'
 ```
 **Response (`201 Created`):**

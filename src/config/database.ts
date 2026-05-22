@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { config } from './env'
 
 export interface GatewayRoute {
   id: number
@@ -9,7 +10,7 @@ export interface GatewayRoute {
   createdAt: string
 }
 
-const databasePath = Bun.env.BRISKTROUTE_DB_PATH ?? '.data/briskroute.sqlite'
+const databasePath = config.databasePath
 
 mkdirSync(dirname(databasePath), { recursive: true })
 
@@ -43,16 +44,14 @@ const routeCount = db.query('SELECT COUNT(*) AS count FROM gateway_routes').get(
 if (routeCount.count === 0) {
   db.query('INSERT INTO gateway_routes (prefix, target) VALUES ($prefix, $target)').run({
     $prefix: '/api',
-    $target: Bun.env.DEFAULT_UPSTREAM ?? 'http://localhost:4000'
+    $target: config.defaultUpstream
   })
 }
 
-const routeByPrefix = db.query(`
+const allRoutes = db.query(`
   SELECT id, prefix, target, created_at AS createdAt
   FROM gateway_routes
-  WHERE $pathname = prefix OR $pathname LIKE prefix || '/%'
   ORDER BY LENGTH(prefix) DESC
-  LIMIT 1
 `)
 
 const upsertRoute = db.query(`
@@ -62,12 +61,20 @@ const upsertRoute = db.query(`
 `)
 
 export function resolveRoute(pathname: string): GatewayRoute | null {
-  return routeByPrefix.get({ $pathname: pathname }) as GatewayRoute | null
+  return routeCache.find((route) => pathname === route.prefix || pathname.startsWith(`${route.prefix}/`)) ?? null
 }
 
 export function saveRoute(prefix: string, target: string): void {
-  upsertRoute.run({ $prefix: normalizePrefix(prefix), $target: target })
+  const normalizedPrefix = normalizePrefix(prefix)
+  upsertRoute.run({ $prefix: normalizedPrefix, $target: target })
+  routeCache = loadRoutes()
 }
+
+function loadRoutes(): GatewayRoute[] {
+  return allRoutes.all() as GatewayRoute[]
+}
+
+let routeCache = loadRoutes()
 
 export function normalizePrefix(prefix: string): string {
   const trimmed = prefix.trim()

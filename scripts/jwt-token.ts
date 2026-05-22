@@ -5,11 +5,12 @@ function base64Url(input: string | Buffer): string {
 }
 
 const secret = Bun.env.JWT_SECRET ?? 'briskroute-local-development-secret'
+const scope = Bun.env.JWT_SCOPE ?? 'benchmark routes:write'
 const header = base64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
 const payload = base64Url(
   JSON.stringify({
     sub: 'benchmark-user',
-    scope: 'benchmark',
+    scope,
     iat: Math.floor(Date.now() / 1000)
   })
 )
