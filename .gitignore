@@ -20,3 +20,6 @@ bun.lockb
 # Build output
 dist/
 coverage/
+
+# AI
+AGENTS.md
