@@ -1,0 +1,22 @@
+node_modules/
+
+# Bun / package manager
+bun.lockb
+
+# Runtime data
+.data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Build output
+dist/
+coverage/
